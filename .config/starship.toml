@@ -1,0 +1,118 @@
+# Inserts a blank line between shell prompts
+#add_newline = true
+
+#format = "$all"
+
+format = """
+$username\
+$hostname\
+$shlvl\
+$kubernetes\
+$directory\
+$vcsh\
+$git_branch\
+$git_commit\
+$git_state\
+$git_status\
+$hg_branch\
+$docker_context\
+$package\
+$cmake\
+$dart\
+$deno\
+$dotnet\
+$elixir\
+$elm\
+$erlang\
+$golang\
+$helm\
+$java\
+$julia\
+$kotlin\
+$nim\
+$nodejs\
+$ocaml\
+$perl\
+$php\
+$purescript\
+$python\
+$red\
+$ruby\
+$rust\
+$scala\
+$swift\
+$terraform\
+$vlang\
+$vagrant\
+$zig\
+$nix_shell\
+$conda\
+$memory_usage\
+$aws\
+$gcloud\
+$openstack\
+$env_var\
+$crystal\
+$custom\
+$cmd_duration\
+
+$lua\
+$jobs\
+$battery\
+$time\
+$line_break\
+$status\
+$shell\
+$character"""
+
+
+
+
+# SUCCESS CHAR
+#Replace the "❯" symbol in the prompt with "❖"[character]                            
+# The name of the module we are configuring is "character"
+[character]
+# The "success_symbol" segment is being set to "❖" with the color "#c2ffdf"
+success_symbol = "|[❖](#c2ffdf)"
+error_symbol = "|[❖](#ff857f)"
+#success color: cyan main color
+#failure color: salmon
+#👻
+
+#CMD DURATION
+#display cmd duration for last executed command
+[cmd_duration]
+min_time = 4
+style = "bold (#8077a8)"
+format = '[🕐 $duration](bold #8077a8) | '
+#color is dark grey-purple
+
+[time]
+disabled = false
+format = '⌚ [\[$time\]]($style) | '
+time_format = "%T"
+style = "#a8757b"
+
+
+[username]
+disabled = false
+show_always = true
+style_user = "#f1568e bold"
+format = "|[$user]($style) in "
+
+[directory]
+format = "[$path]($style) | "
+truncate_to_repo = false
+truncation_length = 15
+style = "bold #ffb8d1"
+truncation_symbol = ".../"
+read_only = "🔒"
+#color is pale lilac
+
+[hostname]
+ssh_only = false
+format = "[$hostname](bold red) "
+disabled = false
+
+
+
