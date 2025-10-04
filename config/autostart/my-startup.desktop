@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Exec=/home/bluekitty/.local/bin/my-startup.sh
+Name=My Startup Apps
+Hidden=false

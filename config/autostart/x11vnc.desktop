@@ -1,0 +1,19 @@
+[Desktop Entry]
+Categories=Network;RemoteAccess;
+Comment[en_US]=Share this desktop by VNC
+Comment=Share this desktop by VNC
+Exec=x11vnc -display :0 -forever -shared -passwd outwalk -bg -o ~/.x11vnc.log
+GenericName[en_US]=
+GenericName=
+Icon=computer
+Keywords=VNC;Server;Screencast
+MimeType=
+Name[en_US]=X11VNC Server
+Name=X11VNC Server
+Path=
+StartupNotify=false
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=
