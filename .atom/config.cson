@@ -1,0 +1,18 @@
+"*":
+  core:
+    audioBeep: false
+    telemetryConsent: "no"
+    themes: [
+      "fairyfloss-ui"
+      "fairyfloss"
+    ]
+  editor:
+    fontFamily: "daddytime mono nerd font, Menlo, Consolas, DejaVu Sans Mono, monospace"
+  "exception-reporting":
+    userId: "b76717e3-188a-4970-b07c-73dcb2206295"
+  "file-icons":
+    coloured: false
+  "linter-ui-default":
+    useBusySignal: false
+  "tool-bar":
+    position: "Left"
