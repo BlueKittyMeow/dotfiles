@@ -1,0 +1,75 @@
+#!/bin/bash
+# VNC Watchdog: monitors VNC server, restarts as needed.
+
+MODE_FILE="$HOME/.config/vnc-mode"
+LOG="/tmp/vnc-watchdog.log"
+
+[ ! -f "$MODE_FILE" ] && echo "claude" > "$MODE_FILE"
+
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
+
+start_vnc() {
+    local mode=$(cat "$MODE_FILE" 2>/dev/null || echo "claude")
+    log "Starting VNC in $mode mode..."
+    "$HOME/.local/bin/vnc-switch" "$mode" >> "$LOG" 2>&1
+}
+
+claude_running() {
+    # Check if Claude Desktop Electron process exists
+    # Use /proc directly for reliability under systemd
+    for pid_dir in /proc/[0-9]*; do
+        if [ -f "$pid_dir/cmdline" ] 2>/dev/null; then
+            if tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null | grep -q "claude-desktop.*electron.*app.asar$"; then
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# Initial start
+start_vnc
+
+while true; do
+    sleep 10
+    
+    # Respect "stopped" mode — don't restart
+    mode=$(cat "$MODE_FILE" 2>/dev/null || echo "claude")
+    if [ "$mode" = "stopped" ]; then
+        continue
+    fi
+
+    # Check if x11vnc is alive
+    if ! pgrep -x x11vnc > /dev/null 2>&1; then
+        # Wait a beat — vnc-switch may be mid-transition
+        sleep 5
+        # Re-check mode (switch may have changed it)
+        mode=$(cat "$MODE_FILE" 2>/dev/null || echo "claude")
+        if [ "$mode" = "stopped" ]; then
+            continue
+        fi
+        # Still dead? Restart
+        if ! pgrep -x x11vnc > /dev/null 2>&1; then
+            log "x11vnc not running — restarting in $mode mode..."
+            start_vnc
+        fi
+        continue
+    fi
+    
+    # In claude mode, verify Claude is still up
+    if [ "$mode" = "claude" ]; then
+        if ! claude_running; then
+            log "Claude Desktop not detected — waiting..."
+            # DON'T kill VNC — just wait. It might come back.
+            continue
+        fi
+    fi
+    
+    # In desktop mode, check capture daemon
+    if [ "$mode" = "desktop" ]; then
+        if ! pgrep -f cosmic-vnc-capture > /dev/null 2>&1; then
+            log "Capture daemon died — restarting..."
+            start_vnc
+        fi
+    fi
+done

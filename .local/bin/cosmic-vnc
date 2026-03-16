@@ -1,0 +1,87 @@
+#!/bin/bash
+# Full COSMIC desktop VNC server.
+# Uses cosmic-screenshot for capture, x11vnc -rawfb for serving.
+# 
+# Usage: cosmic-vnc [--bg]
+#   --bg: run in background (for systemd)
+
+set -e
+
+FB_PATH="/tmp/cosmic-vnc-fb"
+VNC_PORT=5900
+WIDTH=1920
+HEIGHT=1080
+FPS=8
+
+# Kill any existing instances
+pkill -f "cosmic-vnc-capture" 2>/dev/null || true
+pkill -f "x11vnc.*rawfb" 2>/dev/null || true
+# Also kill the old single-window x11vnc if running
+pkill x11vnc 2>/dev/null || true
+sleep 0.5
+
+echo "=== COSMIC Desktop VNC Server ==="
+echo "Resolution: ${WIDTH}x${HEIGHT}"
+echo "Port: $VNC_PORT"
+echo ""
+
+# Initialize framebuffer
+python3 -c "
+with open('$FB_PATH', 'wb') as f:
+    f.write(b'\x00' * ($WIDTH * $HEIGHT * 4))
+"
+
+# Start capture daemon in background
+echo "Starting capture daemon (${FPS} FPS)..."
+/home/bluekitty/.local/bin/cosmic-vnc-capture &
+CAPTURE_PID=$!
+sleep 1
+
+# Verify capture is running
+if ! kill -0 $CAPTURE_PID 2>/dev/null; then
+    echo "ERROR: Capture daemon failed to start"
+    exit 1
+fi
+
+echo "Capture daemon running (PID $CAPTURE_PID)"
+
+# Start x11vnc with raw framebuffer
+# -rawfb map:/path@WxHxBPP — maps the file as the framebuffer
+# We also connect to :1 for input injection into XWayland windows
+echo "Starting VNC server on port $VNC_PORT..."
+
+env -i HOME="$HOME" DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" \
+    x11vnc \
+    -rawfb map:${FB_PATH}@${WIDTH}x${HEIGHT}x32 \
+    -rfbauth "$HOME/.vnc/passwd" \
+    -rfbport $VNC_PORT \
+    -forever -shared \
+    -nopw \
+    -cursor none \
+    -o /tmp/x11vnc-cosmic.log \
+    "$@" &
+VNC_PID=$!
+sleep 1
+
+if ! kill -0 $VNC_PID 2>/dev/null; then
+    echo "ERROR: VNC server failed to start"
+    kill $CAPTURE_PID 2>/dev/null
+    # Check log
+    tail -5 /tmp/x11vnc-cosmic.log
+    exit 1
+fi
+
+IP=$(ip -4 addr show wlo1 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "unknown")
+echo ""
+echo "=== VNC Server Ready ==="
+echo "Connect from phone: ${IP}:${VNC_PORT}"
+echo "Password: (your VNC password)"
+echo ""
+echo "Capture PID: $CAPTURE_PID"
+echo "VNC PID: $VNC_PID"
+
+# If not backgrounded, wait and clean up on exit
+if [[ "$1" != "--bg" ]]; then
+    trap "kill $CAPTURE_PID $VNC_PID 2>/dev/null; echo 'Stopped.'" EXIT
+    wait $VNC_PID
+fi

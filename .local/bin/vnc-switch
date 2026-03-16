@@ -1,0 +1,90 @@
+#!/bin/bash
+# Switch between VNC modes
+# Usage: vnc-switch [claude|desktop|status|stop]
+
+MODE_FILE="$HOME/.config/vnc-mode"
+
+case "${1:-status}" in
+    claude)
+        echo "Switching to Claude-only VNC..."
+        echo "claude" > "$MODE_FILE"
+        pkill -f cosmic-vnc-capture 2>/dev/null
+        pkill x11vnc 2>/dev/null
+        sleep 1
+        
+        CLAUDE_WID=$(env -i DISPLAY=:1 xwininfo -root -tree 2>/dev/null | grep '"Claude"' | awk '{print $1}')
+        if [ -z "$CLAUDE_WID" ]; then
+            echo "Claude Desktop not found. Is it running?"
+            exit 1
+        fi
+        
+        env -i HOME="$HOME" DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" \
+            x11vnc -id "$CLAUDE_WID" -rfbauth "$HOME/.vnc/passwd" \
+            -forever -shared -noxdamage -rfbport 5900 \
+            -bg -o /tmp/x11vnc.log
+        
+        echo "Claude-only VNC running on port 5900"
+        ;;
+        
+    desktop)
+        echo "Switching to full desktop VNC..."
+        echo "desktop" > "$MODE_FILE"
+        pkill -f cosmic-vnc-capture 2>/dev/null
+        pkill x11vnc 2>/dev/null
+        sleep 1
+        
+        # Init framebuffer
+        python3 -c "
+from PIL import Image
+import subprocess, os, glob
+subprocess.run(['cosmic-screenshot','--interactive=false','--notify=false','--save-dir','/tmp'], capture_output=True, timeout=5)
+import time; time.sleep(0.3)
+shots = sorted(glob.glob('/tmp/Screenshot_*.png'), key=os.path.getmtime)
+if shots:
+    img = Image.open(shots[-1]).convert('RGBA')
+    with open('/tmp/cosmic-vnc-fb','wb') as f: f.write(img.tobytes())
+    os.unlink(shots[-1])
+"
+        
+        # Start capture daemon
+        nohup /home/bluekitty/.local/bin/cosmic-vnc-capture > /tmp/cosmic-vnc-capture.log 2>&1 &
+        sleep 1
+        
+        # Start VNC
+        env -i HOME="$HOME" DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" \
+            x11vnc -rawfb file:/tmp/cosmic-vnc-fb@1920x1080x32 \
+            -rfbauth "$HOME/.vnc/passwd" -rfbport 5900 \
+            -forever -shared -cursor none \
+            -bg -o /tmp/x11vnc-cosmic.log
+        
+        echo "Full desktop VNC running on port 5900"
+        ;;
+        
+    stop)
+        echo "Stopping VNC..."
+        echo "stopped" > "$MODE_FILE"
+        pkill -f cosmic-vnc-capture 2>/dev/null
+        pkill x11vnc 2>/dev/null
+        echo "Stopped."
+        ;;
+        
+    status)
+        VNC_PID=$(pgrep x11vnc 2>/dev/null)
+        CAP_PID=$(pgrep -f cosmic-vnc-capture 2>/dev/null)
+        
+        if [ -z "$VNC_PID" ]; then
+            echo "VNC: not running"
+        elif [ -n "$CAP_PID" ]; then
+            echo "VNC: full desktop mode (PID $VNC_PID, capture PID $CAP_PID)"
+        else
+            echo "VNC: claude-only mode (PID $VNC_PID)"
+        fi
+        
+        IP=$(ip -4 addr show wlo1 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "unknown")
+        echo "Address: ${IP}:5900"
+        ;;
+        
+    *)
+        echo "Usage: vnc-switch [claude|desktop|status|stop]"
+        ;;
+esac

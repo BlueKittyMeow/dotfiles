@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""
+Continuous screen capture for COSMIC desktop → raw framebuffer file.
+x11vnc reads from the framebuffer file via -rawfb.
+"""
+import subprocess
+import time
+import sys
+import os
+from pathlib import Path
+
+FB_PATH = "/tmp/cosmic-vnc-fb"
+SCREENSHOT_PATH = "/tmp/_vnc_screenshot.png"
+TARGET_FPS = 10  # frames per second
+FRAME_INTERVAL = 1.0 / TARGET_FPS
+
+WIDTH, HEIGHT = 1920, 1080
+FB_SIZE = WIDTH * HEIGHT * 4  # RGBA
+
+def init_framebuffer():
+    """Create the raw framebuffer file."""
+    if not os.path.exists(FB_PATH):
+        with open(FB_PATH, "wb") as f:
+            f.write(b'\x00' * FB_SIZE)
+    print(f"Framebuffer: {FB_PATH} ({WIDTH}x{HEIGHT} RGBA)")
+
+def capture_frame():
+    """Take a screenshot and write raw pixels to the framebuffer."""
+    try:
+        # Use cosmic-screenshot (non-interactive, no notification)
+        result = subprocess.run(
+            ["cosmic-screenshot", "--interactive=false", "--notify=false", 
+             "--save-dir", "/tmp"],
+            capture_output=True, text=True, timeout=5
+        )
+        
+        if result.returncode != 0:
+            return False
+            
+        # Find the screenshot file (cosmic-screenshot prints the path)
+        screenshot = result.stdout.strip()
+        if not screenshot or not os.path.exists(screenshot):
+            # Fall back to finding most recent screenshot
+            import glob
+            shots = sorted(glob.glob("/tmp/Screenshot_*.png"), key=os.path.getmtime)
+            if not shots:
+                return False
+            screenshot = shots[-1]
+        
+        # Convert PNG to raw RGBA and write to framebuffer
+        from PIL import Image
+        img = Image.open(screenshot)
+        if img.size != (WIDTH, HEIGHT):
+            img = img.resize((WIDTH, HEIGHT))
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+        
+        # Write raw pixels in-place (r+b avoids truncation that
+        # would invalidate x11vnc's mmap of the framebuffer file)
+        raw = img.tobytes()
+        with open(FB_PATH, "r+b") as f:
+            f.write(raw)
+        
+        # Clean up screenshot
+        os.unlink(screenshot)
+        return True
+        
+    except Exception as e:
+        print(f"Capture error: {e}", file=sys.stderr)
+        return False
+
+def main():
+    print("COSMIC VNC Capture starting...")
+    init_framebuffer()
+    
+    frame_count = 0
+    while True:
+        start = time.time()
+        if capture_frame():
+            frame_count += 1
+            if frame_count % 100 == 0:
+                print(f"Frames captured: {frame_count}")
+        
+        elapsed = time.time() - start
+        sleep_time = max(0, FRAME_INTERVAL - elapsed)
+        time.sleep(sleep_time)
+
+if __name__ == "__main__":
+    main()

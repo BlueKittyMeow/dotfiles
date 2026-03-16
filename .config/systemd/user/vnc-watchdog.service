@@ -1,0 +1,12 @@
+[Unit]
+Description=VNC Watchdog — auto-restarts VNC on crash or Claude Desktop restart
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/home/bluekitty/.local/bin/vnc-watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
