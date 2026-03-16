@@ -1,0 +1,250 @@
+#!/home/bluekitty/.pyenv/versions/3.12.12/bin/python3
+"""
+VNC input relay for Wayland/COSMIC desktop mode.
+
+Reads x11vnc -pipeinput events from stdin and injects them via uinput,
+so COSMIC sees them as real hardware input. Also writes cursor position
+to /tmp/vnc-cursor-pos for the capture daemon to paint a synthetic cursor.
+
+Usage: x11vnc ... -pipeinput /home/bluekitty/.local/bin/vnc-input-relay
+"""
+
+import sys
+import os
+import struct
+import time
+
+# --- evdev / uinput setup ---
+from evdev import UInput, ecodes, AbsInfo
+
+SCREEN_W = 1920
+SCREEN_H = 1080
+CURSOR_FILE = "/tmp/vnc-cursor-pos"
+
+# X11 keysym -> Linux keycode mapping (common keys)
+# Full mapping would be huge; we cover the essentials
+KEYSYM_TO_KEYCODE = {
+    # Letters (lowercase keysyms)
+    0x0061: ecodes.KEY_A, 0x0062: ecodes.KEY_B, 0x0063: ecodes.KEY_C,
+    0x0064: ecodes.KEY_D, 0x0065: ecodes.KEY_E, 0x0066: ecodes.KEY_F,
+    0x0067: ecodes.KEY_G, 0x0068: ecodes.KEY_H, 0x0069: ecodes.KEY_I,
+    0x006a: ecodes.KEY_J, 0x006b: ecodes.KEY_K, 0x006c: ecodes.KEY_L,
+    0x006d: ecodes.KEY_M, 0x006e: ecodes.KEY_N, 0x006f: ecodes.KEY_O,
+    0x0070: ecodes.KEY_P, 0x0071: ecodes.KEY_Q, 0x0072: ecodes.KEY_R,
+    0x0073: ecodes.KEY_S, 0x0074: ecodes.KEY_T, 0x0075: ecodes.KEY_U,
+    0x0076: ecodes.KEY_V, 0x0077: ecodes.KEY_W, 0x0078: ecodes.KEY_X,
+    0x0079: ecodes.KEY_Y, 0x007a: ecodes.KEY_Z,
+    # Uppercase (same keys, shift handled by modifier)
+    0x0041: ecodes.KEY_A, 0x0042: ecodes.KEY_B, 0x0043: ecodes.KEY_C,
+    0x0044: ecodes.KEY_D, 0x0045: ecodes.KEY_E, 0x0046: ecodes.KEY_F,
+    0x0047: ecodes.KEY_G, 0x0048: ecodes.KEY_H, 0x0049: ecodes.KEY_I,
+    0x004a: ecodes.KEY_J, 0x004b: ecodes.KEY_K, 0x004c: ecodes.KEY_L,
+    0x004d: ecodes.KEY_M, 0x004e: ecodes.KEY_N, 0x004f: ecodes.KEY_O,
+    0x0050: ecodes.KEY_P, 0x0051: ecodes.KEY_Q, 0x0052: ecodes.KEY_R,
+    0x0053: ecodes.KEY_S, 0x0054: ecodes.KEY_T, 0x0055: ecodes.KEY_U,
+    0x0056: ecodes.KEY_V, 0x0057: ecodes.KEY_W, 0x0058: ecodes.KEY_X,
+    0x0059: ecodes.KEY_Y, 0x005a: ecodes.KEY_Z,
+    # Numbers
+    0x0030: ecodes.KEY_0, 0x0031: ecodes.KEY_1, 0x0032: ecodes.KEY_2,
+    0x0033: ecodes.KEY_3, 0x0034: ecodes.KEY_4, 0x0035: ecodes.KEY_5,
+    0x0036: ecodes.KEY_6, 0x0037: ecodes.KEY_7, 0x0038: ecodes.KEY_8,
+    0x0039: ecodes.KEY_9,
+    # Function keys
+    0xffbe: ecodes.KEY_F1,  0xffbf: ecodes.KEY_F2,  0xffc0: ecodes.KEY_F3,
+    0xffc1: ecodes.KEY_F4,  0xffc2: ecodes.KEY_F5,  0xffc3: ecodes.KEY_F6,
+    0xffc4: ecodes.KEY_F7,  0xffc5: ecodes.KEY_F8,  0xffc6: ecodes.KEY_F9,
+    0xffc7: ecodes.KEY_F10, 0xffc8: ecodes.KEY_F11, 0xffc9: ecodes.KEY_F12,
+    # Modifiers
+    0xffe1: ecodes.KEY_LEFTSHIFT,  0xffe2: ecodes.KEY_RIGHTSHIFT,
+    0xffe3: ecodes.KEY_LEFTCTRL,   0xffe4: ecodes.KEY_RIGHTCTRL,
+    0xffe9: ecodes.KEY_LEFTALT,    0xffea: ecodes.KEY_RIGHTALT,
+    0xffe7: ecodes.KEY_LEFTMETA,   0xffe8: ecodes.KEY_RIGHTMETA,
+    0xffeb: ecodes.KEY_LEFTMETA,   0xffec: ecodes.KEY_RIGHTMETA,  # Super_L/R
+    # Navigation
+    0xff0d: ecodes.KEY_ENTER,  0xff1b: ecodes.KEY_ESC,
+    0xff08: ecodes.KEY_BACKSPACE, 0xff09: ecodes.KEY_TAB,
+    0xff50: ecodes.KEY_HOME,   0xff57: ecodes.KEY_END,
+    0xff55: ecodes.KEY_PAGEUP, 0xff56: ecodes.KEY_PAGEDOWN,
+    0xff51: ecodes.KEY_LEFT,   0xff52: ecodes.KEY_UP,
+    0xff53: ecodes.KEY_RIGHT,  0xff54: ecodes.KEY_DOWN,
+    0xffff: ecodes.KEY_DELETE, 0xff63: ecodes.KEY_INSERT,
+    # Symbols
+    0x0020: ecodes.KEY_SPACE,
+    0x002d: ecodes.KEY_MINUS,      0x003d: ecodes.KEY_EQUAL,
+    0x005b: ecodes.KEY_LEFTBRACE,  0x005d: ecodes.KEY_RIGHTBRACE,
+    0x005c: ecodes.KEY_BACKSLASH,  0x003b: ecodes.KEY_SEMICOLON,
+    0x0027: ecodes.KEY_APOSTROPHE, 0x0060: ecodes.KEY_GRAVE,
+    0x002c: ecodes.KEY_COMMA,      0x002e: ecodes.KEY_DOT,
+    0x002f: ecodes.KEY_SLASH,
+    # Caps lock, etc
+    0xffe5: ecodes.KEY_CAPSLOCK,
+    0xff14: ecodes.KEY_SCROLLLOCK,
+    0xff7f: ecodes.KEY_NUMLOCK,
+    0xff13: ecodes.KEY_PAUSE,
+    0xff61: ecodes.KEY_SYSRQ,  # Print Screen
+}
+
+
+def log(msg):
+    sys.stderr.write(f"[vnc-input-relay] {msg}\n")
+    sys.stderr.flush()
+
+
+def create_uinput_device():
+    """Create a virtual input device with absolute pointer and keyboard."""
+    cap = {
+        ecodes.EV_ABS: [
+            (ecodes.ABS_X, AbsInfo(value=0, min=0, max=SCREEN_W - 1, fuzz=0, flat=0, resolution=0)),
+            (ecodes.ABS_Y, AbsInfo(value=0, min=0, max=SCREEN_H - 1, fuzz=0, flat=0, resolution=0)),
+        ],
+        ecodes.EV_KEY: [
+            ecodes.BTN_LEFT, ecodes.BTN_RIGHT, ecodes.BTN_MIDDLE,
+            ecodes.BTN_SIDE, ecodes.BTN_EXTRA,
+        ] + list(set(KEYSYM_TO_KEYCODE.values())),
+        ecodes.EV_REL: [
+            ecodes.REL_WHEEL, ecodes.REL_HWHEEL,
+        ],
+    }
+    ui = UInput(cap, name="vnc-input-relay", vendor=0x1234, product=0x5678)
+    log("Created uinput device")
+    return ui
+
+
+def write_cursor_pos(x, y):
+    """Write cursor position atomically for the capture daemon."""
+    tmp = CURSOR_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(f"{x} {y}\n")
+        os.rename(tmp, CURSOR_FILE)
+    except OSError:
+        pass
+
+
+def handle_pointer(ui, parts, prev_mask):
+    """Handle a Pointer event line."""
+    # Pointer <client> <x> <y> <mask> <hint>
+    try:
+        client = int(parts[1])
+        x = int(parts[2])
+        y = int(parts[3])
+        mask = int(parts[4])
+    except (IndexError, ValueError) as e:
+        log(f"Bad pointer event: {parts} ({e})")
+        return prev_mask
+
+    if client < 0:
+        return prev_mask  # viewonly client, ignore
+
+    # Clamp coordinates
+    x = max(0, min(SCREEN_W - 1, x))
+    y = max(0, min(SCREEN_H - 1, y))
+
+    # Move pointer (absolute)
+    ui.write(ecodes.EV_ABS, ecodes.ABS_X, x)
+    ui.write(ecodes.EV_ABS, ecodes.ABS_Y, y)
+
+    # Check button state changes
+    # VNC mask: bit 0 = left, bit 1 = middle, bit 2 = right
+    # bits 3,4 = scroll up/down
+    button_map = {
+        0: ecodes.BTN_LEFT,
+        1: ecodes.BTN_MIDDLE,
+        2: ecodes.BTN_RIGHT,
+    }
+
+    for bit, btn in button_map.items():
+        was_pressed = (prev_mask >> bit) & 1
+        is_pressed = (mask >> bit) & 1
+        if was_pressed != is_pressed:
+            ui.write(ecodes.EV_KEY, btn, is_pressed)
+
+    # Scroll wheel: bits 3 (up) and 4 (down) are momentary
+    if mask & 0x08:  # scroll up
+        ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, 1)
+    if mask & 0x10:  # scroll down
+        ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, -1)
+
+    ui.syn()
+
+    # Update cursor position file
+    write_cursor_pos(x, y)
+
+    return mask & 0x07  # only keep button bits, not scroll
+
+
+def handle_keysym(ui, parts):
+    """Handle a Keysym event line."""
+    # Keysym <client> <down> <keysym> <name> <hint>
+    try:
+        client = int(parts[1])
+        down = int(parts[2])
+        keysym = int(parts[3])
+        name = parts[4] if len(parts) > 4 else "unknown"
+    except (IndexError, ValueError) as e:
+        log(f"Bad keysym event: {parts} ({e})")
+        return
+
+    if client < 0:
+        return  # viewonly client, ignore
+
+    keycode = KEYSYM_TO_KEYCODE.get(keysym)
+    if keycode is None:
+        log(f"Unmapped keysym: {keysym} ({name})")
+        return
+
+    ui.write(ecodes.EV_KEY, keycode, 1 if down else 0)
+    ui.syn()
+
+
+def main():
+    log("Starting VNC input relay...")
+
+    ui = create_uinput_device()
+    # Give COSMIC a moment to discover the new device
+    time.sleep(0.2)
+
+    # Initialize cursor at center
+    write_cursor_pos(SCREEN_W // 2, SCREEN_H // 2)
+
+    prev_mask = 0
+    header_done = False
+
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+
+            # Skip header comments and blank lines
+            if not header_done:
+                if line == "END_OF_TOP":
+                    header_done = True
+                    log("Header parsed, processing events...")
+                continue
+
+            if not line or line.startswith("#"):
+                continue
+
+            parts = line.split()
+            if not parts:
+                continue
+
+            if parts[0] == "Pointer":
+                prev_mask = handle_pointer(ui, parts, prev_mask)
+            elif parts[0] == "Keysym":
+                handle_keysym(ui, parts)
+
+    except KeyboardInterrupt:
+        log("Interrupted.")
+    except Exception as e:
+        log(f"Error: {e}")
+    finally:
+        log("Cleaning up...")
+        try:
+            os.unlink(CURSOR_FILE)
+        except OSError:
+            pass
+        ui.close()
+
+
+if __name__ == "__main__":
+    main()

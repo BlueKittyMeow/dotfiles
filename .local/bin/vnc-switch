@@ -9,7 +9,9 @@ case "${1:-status}" in
         echo "Switching to Claude-only VNC..."
         echo "claude" > "$MODE_FILE"
         pkill -f cosmic-vnc-capture 2>/dev/null
+        pkill -f vnc-input-relay 2>/dev/null
         pkill x11vnc 2>/dev/null
+        rm -f /tmp/vnc-cursor-pos 2>/dev/null
         sleep 1
         
         CLAUDE_WID=$(env -i DISPLAY=:1 xwininfo -root -tree 2>/dev/null | grep '"Claude"' | awk '{print $1}')
@@ -30,7 +32,9 @@ case "${1:-status}" in
         echo "Switching to full desktop VNC..."
         echo "desktop" > "$MODE_FILE"
         pkill -f cosmic-vnc-capture 2>/dev/null
+        pkill -f vnc-input-relay 2>/dev/null
         pkill x11vnc 2>/dev/null
+        rm -f /tmp/vnc-cursor-pos 2>/dev/null
         sleep 1
         
         # Init framebuffer
@@ -50,21 +54,25 @@ if shots:
         nohup /home/bluekitty/.local/bin/cosmic-vnc-capture > /tmp/cosmic-vnc-capture.log 2>&1 &
         sleep 1
         
-        # Start VNC
+        # Start VNC with input relay for Wayland interaction
         env -i HOME="$HOME" DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" \
+            PATH="$HOME/.local/bin:/usr/bin:/bin" \
             x11vnc -rawfb file:/tmp/cosmic-vnc-fb@1920x1080x32 \
             -rfbauth "$HOME/.vnc/passwd" -rfbport 5900 \
             -forever -shared -cursor none \
+            -pipeinput "$HOME/.local/bin/vnc-input-relay" \
             -bg -o /tmp/x11vnc-cosmic.log
-        
-        echo "Full desktop VNC running on port 5900"
+
+        echo "Full desktop VNC running on port 5900 (with input relay)"
         ;;
         
     stop)
         echo "Stopping VNC..."
         echo "stopped" > "$MODE_FILE"
         pkill -f cosmic-vnc-capture 2>/dev/null
+        pkill -f vnc-input-relay 2>/dev/null
         pkill x11vnc 2>/dev/null
+        rm -f /tmp/vnc-cursor-pos 2>/dev/null
         echo "Stopped."
         ;;
         

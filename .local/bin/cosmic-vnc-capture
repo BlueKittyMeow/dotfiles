@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/bluekitty/.pyenv/versions/3.12.12/bin/python3
 """
 Continuous screen capture for COSMIC desktop → raw framebuffer file.
 x11vnc reads from the framebuffer file via -rawfb.
@@ -11,11 +11,18 @@ from pathlib import Path
 
 FB_PATH = "/tmp/cosmic-vnc-fb"
 SCREENSHOT_PATH = "/tmp/_vnc_screenshot.png"
+CURSOR_FILE = "/tmp/vnc-cursor-pos"
 TARGET_FPS = 10  # frames per second
 FRAME_INTERVAL = 1.0 / TARGET_FPS
 
 WIDTH, HEIGHT = 1920, 1080
 FB_SIZE = WIDTH * HEIGHT * 4  # RGBA
+
+# Cursor: bright orange dot with dark outline, 12px radius
+CURSOR_RADIUS = 12
+CURSOR_COLOR = (255, 140, 0, 255)       # orange fill
+CURSOR_OUTLINE = (0, 0, 0, 200)         # dark outline
+CURSOR_CENTER = (255, 255, 255, 255)    # white center dot
 
 def init_framebuffer():
     """Create the raw framebuffer file."""
@@ -23,6 +30,32 @@ def init_framebuffer():
         with open(FB_PATH, "wb") as f:
             f.write(b'\x00' * FB_SIZE)
     print(f"Framebuffer: {FB_PATH} ({WIDTH}x{HEIGHT} RGBA)")
+
+
+def read_cursor_pos():
+    """Read cursor position from the relay's cursor file."""
+    try:
+        with open(CURSOR_FILE, "r") as f:
+            parts = f.read().strip().split()
+            if len(parts) >= 2:
+                return int(parts[0]), int(parts[1])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def paint_cursor(img, cx, cy):
+    """Paint a synthetic cursor dot onto the image."""
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img)
+    r = CURSOR_RADIUS
+    # Outer circle (dark outline)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=CURSOR_OUTLINE)
+    # Inner circle (orange fill)
+    draw.ellipse([cx - r + 2, cy - r + 2, cx + r - 2, cy + r - 2], fill=CURSOR_COLOR)
+    # Center dot (white)
+    draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=CURSOR_CENTER)
+    return img
 
 def capture_frame():
     """Take a screenshot and write raw pixels to the framebuffer."""
@@ -55,6 +88,14 @@ def capture_frame():
         if img.mode != 'RGBA':
             img = img.convert('RGBA')
         
+        # Paint synthetic cursor if relay is running
+        cursor_pos = read_cursor_pos()
+        if cursor_pos:
+            cx, cy = cursor_pos
+            cx = max(0, min(WIDTH - 1, cx))
+            cy = max(0, min(HEIGHT - 1, cy))
+            img = paint_cursor(img, cx, cy)
+
         # Write raw pixels in-place (r+b avoids truncation that
         # would invalidate x11vnc's mmap of the framebuffer file)
         raw = img.tobytes()
