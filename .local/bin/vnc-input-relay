@@ -211,12 +211,17 @@ def main():
     header_done = False
 
     try:
-        for line in sys.stdin:
+        # CRITICAL: use readline() not `for line in stdin` — the latter
+        # buffers 8KB internally, causing massive input lag
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                break  # EOF
             line = line.strip()
 
             # Skip header comments and blank lines
             if not header_done:
-                if line == "END_OF_TOP":
+                if "END_OF_TOP" in line:
                     header_done = True
                     log("Header parsed, processing events...")
                 continue

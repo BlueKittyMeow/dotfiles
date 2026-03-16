@@ -46,6 +46,7 @@ import time; time.sleep(0.3)
 shots = sorted(glob.glob('/tmp/Screenshot_*.png'), key=os.path.getmtime)
 if shots:
     img = Image.open(shots[-1]).convert('RGBA')
+    r,g,b,a = img.split(); img = Image.merge('RGBA',(b,g,r,a))
     with open('/tmp/cosmic-vnc-fb','wb') as f: f.write(img.tobytes())
     os.unlink(shots[-1])
 "
@@ -55,14 +56,19 @@ if shots:
         sleep 1
         
         # Start VNC with input relay for Wayland interaction
-        env -i HOME="$HOME" DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" \
+        # NOTE: no -bg here! -bg breaks -pipeinput (parent exits, pipe closes)
+        # Instead we nohup the whole thing into the background
+        nohup env -i HOME="$HOME" DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" \
             PATH="$HOME/.local/bin:/usr/bin:/bin" \
             x11vnc -rawfb file:/tmp/cosmic-vnc-fb@1920x1080x32 \
             -rfbauth "$HOME/.vnc/passwd" -rfbport 5900 \
             -forever -shared -cursor none \
             -pipeinput "$HOME/.local/bin/vnc-input-relay" \
-            -bg -o /tmp/x11vnc-cosmic.log
+            -o /tmp/x11vnc-cosmic.log \
+            > /dev/null 2>&1 &
 
+        # Wait for x11vnc to start listening
+        sleep 2
         echo "Full desktop VNC running on port 5900 (with input relay)"
         ;;
         

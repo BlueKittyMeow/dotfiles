@@ -96,6 +96,10 @@ def capture_frame():
             cy = max(0, min(HEIGHT - 1, cy))
             img = paint_cursor(img, cx, cy)
 
+        # Swap R and B channels: x11vnc rawfb expects BGRA byte order
+        r, g, b, a = img.split()
+        img = Image.merge('RGBA', (b, g, r, a))
+
         # Write raw pixels in-place (r+b avoids truncation that
         # would invalidate x11vnc's mmap of the framebuffer file)
         raw = img.tobytes()
